@@ -1,0 +1,820 @@
+
+COMANDOS COMPLETOS - PROYECTO SURCONNECT IT SOLUTIONS
+
+# PC 2 - FREEIPA (Rocky Linux 9)
+# IP: 192.168.137.2
+# Función: Servidor de autenticación centralizada (LDAP + Kerberos + DNS)
+
+--- DURANTE INSTALACIÓN (interfaz gráfica) ---
+Hostname: ipa.surconnect.local
+IP: 192.168.137.2
+Máscara: 255.255.255.0
+Gateway: 192.168.137.1
+DNS: 127.0.0.1
+Root Password: SurConnect2026!
+
+--- DESPUÉS DE INSTALAR (login como root) ---
+
+# Actualizar sistema
+dnf update -y
+
+# Configurar hostname
+hostnamectl set-hostname ipa.surconnect.local
+
+# Agregar entrada en /etc/hosts (para resolución local)
+echo "192.168.137.2 ipa.surconnect.local ipa" >> /etc/hosts
+
+# Instalar repositorio de Identity Management
+dnf install -y @idm:DL1
+
+# Instalar FreeIPA con DNS integrado
+dnf install -y ipa-server ipa-server-dns
+
+# Ejecutar instalador de FreeIPA (interactivo, tarda 20-40 min)
+ipa-server-install --setup-dns
+
+    Respuestas durante la instalación:
+    - Server host name: ipa.surconnect.local [Enter]
+    - Domain name: surconnect.local [Enter]
+    - Realm name: SURCONNECT.LOCAL [Enter]
+    - Directory Manager password: SurConnect2026!
+    - IPA admin password: SurConnect2026!
+    - Configure DNS forwarders? yes
+    - DNS forwarder: 8.8.8.8 [Enter]
+    - Add another? no
+    - Continue? yes
+
+# Obtener ticket de Kerberos (autenticarse como admin)
+kinit admin
+# Password: SurConnect2026!
+
+# Verificar que FreeIPA funciona
+ipa user-find
+
+# Crear grupo de empleados
+ipa group-add empleados --desc="Empleados de SurConnect"
+
+# Crear grupo de soporte técnico
+ipa group-add soporte-tecnico --desc="Analistas de soporte tecnico"
+
+# Crear usuario trabajador (empleado normal)
+ipa user-add trabajador --first=Juan --last=Perez --password
+# Password temporal: Trabajador123!
+
+# Crear usuario admin.soporte (analista de soporte)
+ipa user-add admin.soporte --first=Carlos --last=Lopez --password
+# Password temporal: AdminSoporte123!
+
+# Agregar trabajador al grupo empleados
+ipa group-add-member empleados --users=trabajador
+
+# Agregar admin.soporte al grupo soporte-tecnico
+ipa group-add-member soporte-tecnico --users=admin.soporte
+
+# Configurar política de contraseñas: mínimo 10 caracteres
+ipa pwpolicy-mod --minlength=10
+
+# Configurar política: mínimo 3 tipos de caracteres (mayúscula+minúscula+número)
+ipa pwpolicy-mod --minclasses=3
+
+# Configurar política: bloqueo tras 3 intentos fallidos
+ipa pwpolicy-mod --maxfail=3
+
+# Configurar política: ventana de tiempo de 10 minutos para intentos
+ipa pwpolicy-mod --failinterval=600
+
+# Configurar política: bloqueo permanente (solo admin desbloquea)
+ipa pwpolicy-mod --lockouttime=0
+
+# Crear zona DNS para el portal web (cambiar 'iniciales' por las del equipo)
+ipa dnszone-add iniciales.net
+
+# Agregar registro A para el portal (apunta a Nginx)
+ipa dnsrecord-add iniciales.net @ --a-rec=192.168.137.18
+
+# Ver configuración del dominio
+ipa config-show
+
+# Listar todos los usuarios
+ipa user-find
+
+# Listar todos los grupos
+ipa group-find
+
+# Ver miembros de un grupo
+ipa group-show empleados
+
+# Desbloquear un usuario (si se bloqueó por intentos fallidos)
+ipa user-unlock trabajador
+
+# Ver estado de un usuario
+ipa user-show trabajador
+
+# Cambiar contraseña de un usuario
+ipa passwd trabajador
+
+# Ver políticas de contraseña aplicadas
+ipa pwpolicy-show
+
+# Verificar replicación DNS
+ipa dns-resolve iniciales.net
+ipa dns-resolve ipa.surconnect.local
+
+# Ver logs de autenticación (troubleshooting)
+tail -f /var/log/krb5kdc.log
+tail -f /var/log/dirsrv/slapd-SURCONNECT-LOCAL/access
+
+# Reiniciar servicios de FreeIPA (si algo falla)
+ipactl restart
+
+# Ver estado de todos los servicios de FreeIPA
+ipactl status
+
+
+################################################################################
+# PC 1 - WINDOWS SERVER 2022
+# IP: 192.168.137.100
+# Función: GPOs (políticas de grupo) + Repositorio de software (SMB)
+################################################################################
+
+--- DURANTE INSTALACIÓN (interfaz gráfica) ---
+Edición: Windows Server 2022 Standard (Desktop Experience)
+Contraseña Administrador: SurConnect2026!
+
+--- CONFIGURAR IP (Panel de Control o PowerShell) ---
+
+# Ver configuración de red actual
+Get-NetIPConfiguration
+
+# Ver adaptadores de red disponibles
+Get-NetAdapter
+
+# Remover IP actual (si existe alguna automática)
+Remove-NetIPAddress -InterfaceAlias "Ethernet0" -Confirm:$false
+
+# Remover gateway actual
+Remove-NetRoute -InterfaceAlias "Ethernet0" -Confirm:$false
+
+# Configurar IP estática
+New-NetIPAddress -InterfaceAlias "Ethernet0" -IPAddress 192.168.137.100 -PrefixLength 24 -DefaultGateway 192.168.137.1
+
+# Configurar DNS apuntando a FreeIPA
+Set-DnsClientServerAddress -InterfaceAlias "Ethernet0" -ServerAddresses 192.168.137.2
+
+# Verificar que quedó bien configurado
+Get-NetIPConfiguration
+
+# Probar conectividad a FreeIPA
+ping 192.168.137.2
+
+# Probar resolución DNS del dominio
+nslookup surconnect.local 192.168.137.2
+
+--- UNIR AL DOMINIO FREEIPA ---
+
+# Ver si ya está en algún dominio
+Get-WmiObject -Class Win32_ComputerSystem | Select-Object Domain, PartOfDomain
+
+# Unir al dominio surconnect.local (método PowerShell)
+Add-Computer -DomainName "surconnect.local" -Credential (Get-Credential) -Restart
+# Usuario: admin
+# Password: SurConnect2026!
+
+# Alternativa: unir por interfaz gráfica
+# Sistema > Propiedades > Cambiar configuración > Cambiar
+# Dominio: surconnect.local
+# Usuario: admin
+# Password: SurConnect2026!
+# [Reiniciar]
+
+--- CONFIGURAR GPOs (después de reiniciar, login como Administrador) ---
+
+# Abrir consola de administración de GPOs
+gpmc.msc
+
+# O desde PowerShell
+mmc gpmc.msc
+
+    Interfaz gráfica:
+    1. Click derecho en surconnect.local > Crear GPO > Nombre: Politicas-Empleados
+    2. Click derecho en Politicas-Empleados > Editar
+    
+    GPO 1 - Bloquear CMD:
+    Config usuario > Plantillas admin > Sistema > 
+    "Impedir acceso al simbolo del sistema" > Habilitada
+    
+    GPO 2 - Bloquear Panel de Control:
+    Config usuario > Plantillas admin > Panel de control >
+    "Prohibir acceso a Panel de control" > Habilitada
+    
+    GPO 3 - Bloquear instalación de software:
+    Config equipo > Plantillas admin > Componentes Windows > Windows Installer >
+    "Prohibir instalacion de usuario" > Habilitada
+    
+    Filtrado seguridad: Agregar grupo "empleados", quitar "Usuarios autenticados"
+    
+    GPO 4 - Deshabilitar cuenta invitado:
+    Config equipo > Config Windows > Config seguridad > Opciones seguridad >
+    "Cuentas: estado cuenta invitado" > Deshabilitada
+    
+    GPO 5 - Contraseña mínimo 10 caracteres:
+    Config equipo > Config Windows > Config seguridad > Directivas cuenta >
+    Directiva contraseñas > "Longitud minima" > 10
+    
+    GPO 6 - Complejidad contraseña:
+    Misma ruta > "Debe cumplir requisitos complejidad" > Habilitada
+    
+    GPO 7 - Bloqueo tras 3 intentos:
+    Config equipo > Config Windows > Config seguridad > Directivas cuenta >
+    Directiva bloqueo > "Umbral bloqueo" > 3 intentos
+                      > "Duracion bloqueo" > 0
+
+--- CONFIGURAR REPOSITORIO SMB ---
+
+# Crear carpeta para repositorio
+New-Item -Path "C:\SoftwareRepo" -ItemType Directory
+
+# Compartir carpeta (PowerShell)
+New-SmbShare -Name "SoftwareRepo" -Path "C:\SoftwareRepo" -ReadAccess "soporte-tecnico@surconnect.local"
+
+# Verificar que se compartió
+Get-SmbShare
+
+# Ver permisos del recurso compartido
+Get-SmbShareAccess -Name "SoftwareRepo"
+
+# Agregar permisos adicionales si es necesario
+Grant-SmbShareAccess -Name "SoftwareRepo" -AccountName "soporte-tecnico@surconnect.local" -AccessRight Read
+
+# Quitar permisos a "Everyone" si existen
+Revoke-SmbShareAccess -Name "SoftwareRepo" -AccountName "Everyone" -Force
+
+# Copiar archivos al repositorio (ejemplo: descargar 7-Zip)
+# Copiar manualmente .exe a C:\SoftwareRepo\
+
+# Ver archivos en el repositorio
+Get-ChildItem C:\SoftwareRepo
+
+--- VERIFICACIÓN Y TROUBLESHOOTING ---
+
+# Ver GPOs aplicadas en este equipo
+gpresult /r
+
+# Forzar actualización de GPOs
+gpupdate /force
+
+# Ver logs de eventos de Group Policy
+Get-EventLog -LogName System -Source "Microsoft-Windows-GroupPolicy" -Newest 20
+
+# Ver usuarios del dominio desde Windows Server
+Get-ADUser -Filter *
+
+# Ver grupos del dominio
+Get-ADGroup -Filter *
+
+# Ver miembros de un grupo
+Get-ADGroupMember -Identity "empleados"
+
+# Probar acceso al repositorio SMB desde este servidor
+Test-Path \\192.168.137.100\SoftwareRepo
+
+
+
+# PC 3 - NGINX (Ubuntu Server 22.04/24.04)
+# IP: 192.168.137.18
+# Función: Servidor web HTTPS (portal corporativo en DMZ)
+
+
+--- DURANTE INSTALACIÓN (interfaz del instalador) ---
+Hostname: nginx-surconnect
+Username: admin
+Password: SurConnect2026!
+
+Configuración de red:
+Subnet: 192.168.137.0/24
+Address: 192.168.137.18
+Gateway: 192.168.137.1
+Name servers: 8.8.8.8 (temporal durante instalación)
+Search domains: surconnect.local
+
+Instalar OpenSSH server: [X] Sí
+
+--- DESPUÉS DE INSTALAR (login como admin) ---
+
+# Ver configuración de red actual
+ip addr show
+
+# Editar configuración de red (cambiar DNS a FreeIPA)
+sudo nano /etc/netplan/00-installer-config.yaml
+
+    Contenido:
+    network:
+      version: 2
+      ethernets:
+        ens33:
+          addresses:
+            - 192.168.137.18/24
+          routes:
+            - to: default
+              via: 192.168.137.1
+          nameservers:
+            addresses:
+              - 192.168.137.2
+            search:
+              - surconnect.local
+
+# Aplicar configuración de red
+sudo netplan apply
+
+# Verificar que aplicó correctamente
+ip addr show
+
+# Probar conectividad
+ping -c 4 192.168.137.1
+ping -c 4 192.168.137.2
+ping -c 4 8.8.8.8
+
+# Probar DNS
+nslookup surconnect.local
+
+# Actualizar sistema
+sudo apt update
+sudo apt upgrade -y
+
+# Instalar Nginx
+sudo apt install -y nginx
+
+# Verificar que Nginx se instaló
+nginx -v
+
+# Ver estado de Nginx
+sudo systemctl status nginx
+
+# Generar certificado SSL autofirmado para HTTPS
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/surconnect.key \
+  -out /etc/ssl/certs/surconnect.crt \
+  -subj "/CN=iniciales.net/O=SurConnect IT Solutions/C=CO"
+
+# Verificar que se crearon los archivos
+ls -la /etc/ssl/private/surconnect.key
+ls -la /etc/ssl/certs/surconnect.crt
+
+# Crear archivo de configuración del sitio
+sudo nano /etc/nginx/sites-available/surconnect
+
+    Contenido:
+    server {
+        listen 443 ssl;
+        server_name iniciales.net;
+
+        ssl_certificate /etc/ssl/certs/surconnect.crt;
+        ssl_certificate_key /etc/ssl/private/surconnect.key;
+
+        root /var/www/surconnect;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+    }
+
+    server {
+        listen 80;
+        server_name iniciales.net;
+        return 301 https://$server_name$request_uri;
+    }
+
+# Crear directorio para el sitio web
+sudo mkdir -p /var/www/surconnect
+
+# Crear página web del portal
+sudo nano /var/www/surconnect/index.html
+
+    Contenido:
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SurConnect IT Solutions</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 50px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            h1 { font-size: 48px; margin-bottom: 20px; }
+            h2 { font-size: 32px; margin-bottom: 15px; }
+            p { font-size: 20px; line-height: 1.6; }
+        </style>
+    </head>
+    <body>
+        <h1>SurConnect IT Solutions</h1>
+        <h2>Portal Corporativo</h2>
+        <p>Bienvenido al portal de SurConnect</p>
+        <p>Servicios de outsourcing de TI para Sudamérica</p>
+        <p>Desarrollo de software | Ciberseguridad | Cloud Computing</p>
+    </body>
+    </html>
+
+# Dar permisos correctos al directorio web
+sudo chown -R www-data:www-data /var/www/surconnect
+sudo chmod -R 755 /var/www/surconnect
+
+# Crear enlace simbólico para activar el sitio
+sudo ln -s /etc/nginx/sites-available/surconnect /etc/nginx/sites-enabled/
+
+# Eliminar sitio por defecto
+sudo rm /etc/nginx/sites-enabled/default
+
+# Verificar configuración de Nginx (buscar errores de sintaxis)
+sudo nginx -t
+
+# Si no hay errores, reiniciar Nginx
+sudo systemctl restart nginx
+
+# Habilitar Nginx para que inicie automáticamente al arrancar
+sudo systemctl enable nginx
+
+# Ver logs de Nginx (troubleshooting)
+sudo tail -f /var/log/nginx/access.log
+sudo tail -f /var/log/nginx/error.log
+
+# Ver puertos en escucha (debería ver 80 y 443)
+sudo ss -tlnp | grep nginx
+
+# Probar acceso local al sitio
+curl http://localhost
+curl -k https://localhost
+
+
+################################################################################
+# PC 3 - PC TRABAJADOR (Windows 11)
+# IP: 192.168.137.50
+# Función: Cliente de empleado regular (probar GPOs)
+################################################################################
+
+--- DURANTE INSTALACIÓN (interfaz gráfica) ---
+Si pide cuenta Microsoft: "Unirse a dominio en su lugar"
+Crear cuenta local temporal: trabajador-local
+Password: Temporal123!
+
+--- CONFIGURAR IP (después de instalar) ---
+
+Panel de Control > Centro de redes > Cambiar configuración adaptador >
+Click derecho Ethernet > Propiedades > IPv4 > Propiedades:
+
+IP: 192.168.137.50
+Máscara: 255.255.255.0
+Gateway: 192.168.137.1
+DNS preferido: 192.168.137.2
+DNS alternativo: (vacío)
+
+--- VERIFICAR CONECTIVIDAD (CMD) ---
+
+# Ver configuración IP
+ipconfig
+
+# Probar ping a gateway
+ping 192.168.137.1
+
+# Probar ping a FreeIPA
+ping 192.168.137.2
+
+# Probar ping a Windows Server
+ping 192.168.137.100
+
+# Probar ping a Nginx
+ping 192.168.137.18
+
+# Probar resolución DNS del dominio
+nslookup surconnect.local 192.168.137.2
+
+# Probar resolución del portal web
+nslookup iniciales.net 192.168.137.2
+
+--- UNIR AL DOMINIO ---
+
+Sistema > Propiedades > Cambiar configuración > Cambiar:
+
+Dominio: surconnect.local
+Usuario: admin
+Password: SurConnect2026!
+
+[Aceptar] > "Bienvenido al dominio surconnect.local" > [Reiniciar]
+
+--- LOGIN COMO USUARIO DEL DOMINIO (después de reiniciar) ---
+
+Pantalla de login > Otro usuario
+Usuario: trabajador@surconnect.local
+Password: Trabajador123!
+
+(Primera vez pedirá cambiar contraseña temporal)
+Nueva contraseña: Trabajador2026!
+
+--- APLICAR GPOs ---
+
+# Forzar actualización de políticas de grupo
+gpupdate /force
+
+# Ver GPOs aplicadas
+gpresult /r
+
+# Ver GPOs en detalle (genera reporte HTML)
+gpresult /h C:\Users\trabajador\Desktop\gpos.html
+
+--- CERRAR SESIÓN Y VOLVER A ENTRAR ---
+
+(Las GPOs se aplican completamente al siguiente login)
+
+--- VERIFICAR QUE FUNCIONAN LAS GPOs ---
+
+# Intentar abrir CMD
+Windows + R > cmd > Enter
+Resultado esperado: "El administrador ha deshabilitado el símbolo del sistema"
+
+# Intentar abrir Panel de Control
+Inicio > Panel de control
+Resultado esperado: "Esta configuración ha sido deshabilitada"
+
+# Intentar instalar software
+Descargar cualquier .exe > Doble click
+Resultado esperado: "No tienes permisos para instalar software"
+
+# Abrir navegador
+Edge o Chrome > https://iniciales.net
+Resultado esperado: Portal web carga (aceptar advertencia de certificado)
+
+--- VERIFICAR ACCESO SMB (debe estar DENEGADO) ---
+
+# Explorador de archivos > barra de direcciones
+\\192.168.137.100\SoftwareRepo
+
+Resultado esperado: "No tienes permiso para acceder"
+
+--- PROBAR BLOQUEO DE CUENTA (3 intentos fallidos) ---
+
+# Cerrar sesión
+# Intentar login con contraseña incorrecta 3 veces
+# Resultado esperado: "Esta cuenta ha sido bloqueada"
+
+# Desbloquear desde FreeIPA (en el servidor FreeIPA)
+ipa user-unlock trabajador
+
+
+################################################################################
+# PC 3 - PC ADMIN (Ubuntu Desktop 24.04)
+# IP: 192.168.137.51
+# Función: Cliente de analista de soporte (probar acceso SMB)
+################################################################################
+
+--- DURANTE INSTALACIÓN (interfaz gráfica) ---
+Nombre: SurConnect Admin
+Nombre equipo: admin-surconnect
+Usuario: adminlocal
+Password: Temporal123!
+
+--- CONFIGURAR IP (después de instalar) ---
+
+Configuración > Red > Engranaje junto a la conexión:
+
+IPv4:
+Método: Manual
+Dirección: 192.168.137.51
+Máscara: 255.255.255.0
+Puerta de enlace: 192.168.137.1
+DNS: 192.168.137.2
+Dominios de búsqueda: surconnect.local
+
+[Aplicar]
+
+--- VERIFICAR CONECTIVIDAD (Terminal) ---
+
+# Ver configuración IP
+ip addr show
+
+# Probar conectividad
+ping -c 4 192.168.137.1
+ping -c 4 192.168.137.2
+ping -c 4 192.168.137.100
+
+# Probar DNS
+nslookup surconnect.local
+
+--- UNIR AL DOMINIO FREEIPA ---
+
+# Actualizar sistema
+sudo apt update
+sudo apt upgrade -y
+
+# Instalar paquetes necesarios para FreeIPA client
+sudo apt install -y sssd sssd-tools realmd adcli krb5-user samba-common-bin
+
+    Durante instalación preguntará:
+    Default Kerberos realm: SURCONNECT.LOCAL
+
+# Descubrir el dominio
+realm discover surconnect.local
+
+# Unir al dominio
+sudo realm join surconnect.local -U admin
+# Password: SurConnect2026!
+
+# Permitir login de todos los usuarios del dominio
+sudo realm permit --all
+
+# Opcional: permitir login sin escribir @surconnect.local
+sudo nano /etc/sssd/sssd.conf
+    Cambiar línea:
+    use_fully_qualified_names = False
+
+# Reiniciar servicio SSSD
+sudo systemctl restart sssd
+
+# Verificar que está unido al dominio
+realm list
+
+--- CERRAR SESIÓN Y LOGIN COMO USUARIO DEL DOMINIO ---
+
+Pantalla de login > admin.soporte@surconnect.local
+Password: AdminSoporte123!
+
+(Primera vez pedirá cambiar contraseña)
+Nueva contraseña: AdminSoporte2026!
+
+--- VERIFICAR ACCESO AL REPOSITORIO SMB ---
+
+# Instalar cliente SMB
+sudo apt install -y smbclient cifs-utils
+
+# Listar recursos compartidos en Windows Server
+smbclient -L 192.168.137.100 -U admin.soporte@surconnect.local
+# Password: AdminSoporte2026!
+
+# Conectarse al repositorio
+smbclient //192.168.137.100/SoftwareRepo -U admin.soporte@surconnect.local
+# Password: AdminSoporte2026!
+
+# Dentro de smbclient:
+smb: \> ls          # Listar archivos
+smb: \> get archivo.exe  # Descargar un archivo
+smb: \> exit        # Salir
+
+# Montar el repositorio como carpeta (opcional)
+sudo mkdir /mnt/software-repo
+sudo mount -t cifs //192.168.137.100/SoftwareRepo /mnt/software-repo -o username=admin.soporte@surconnect.local,domain=surconnect.local
+
+# Ver archivos montados
+ls -la /mnt/software-repo
+
+# Desmontar cuando termines
+sudo umount /mnt/software-repo
+
+--- PROBAR ACCESO AL PORTAL WEB ---
+
+# Abrir Firefox
+firefox https://iniciales.net
+
+# O desde terminal
+curl -k https://iniciales.net
+
+
+################################################################################
+# COMANDOS DE VALIDACIÓN GENERAL (ejecutar en cualquier cliente)
+################################################################################
+
+--- DESDE WINDOWS (CMD o PowerShell) ---
+
+# Ver tabla de enrutamiento
+route print
+
+# Ver caché DNS
+ipconfig /displaydns
+
+# Limpiar caché DNS
+ipconfig /flushdns
+
+# Ver todas las conexiones de red
+netstat -an
+
+# Probar conectividad a puerto específico
+Test-NetConnection 192.168.137.2 -Port 389  # LDAP
+Test-NetConnection 192.168.137.2 -Port 88   # Kerberos
+Test-NetConnection 192.168.137.18 -Port 443 # HTTPS
+
+# Ver certificados instalados
+certmgr.msc
+
+# Ver eventos de autenticación
+eventvwr.msc
+# Ir a: Windows Logs > Security
+
+--- DESDE LINUX (Terminal) ---
+
+# Ver tabla de enrutamiento
+ip route show
+
+# Ver caché DNS
+systemd-resolve --status
+
+# Limpiar caché DNS
+sudo systemd-resolve --flush-caches
+
+# Ver todas las conexiones de red
+ss -tulpn
+
+# Probar conectividad a puerto específico
+nc -zv 192.168.137.2 389   # LDAP
+nc -zv 192.168.137.2 88    # Kerberos
+nc -zv 192.168.137.18 443  # HTTPS
+
+# Ver logs del sistema
+sudo journalctl -xe
+
+# Ver logs de autenticación
+sudo tail -f /var/log/auth.log
+
+# Ver procesos de SSSD (cliente FreeIPA)
+sudo systemctl status sssd
+
+
+################################################################################
+# TROUBLESHOOTING COMÚN
+################################################################################
+
+--- PROBLEMA: No puedo unir al dominio ---
+
+Windows:
+# Verificar DNS apunta a FreeIPA
+nslookup surconnect.local 192.168.137.2
+# Verificar conectividad a puertos
+Test-NetConnection 192.168.137.2 -Port 88
+Test-NetConnection 192.168.137.2 -Port 389
+
+Linux:
+# Verificar DNS
+nslookup surconnect.local
+# Verificar Kerberos
+kinit admin@SURCONNECT.LOCAL
+klist
+
+--- PROBLEMA: GPOs no se aplican ---
+
+# Forzar actualización
+gpupdate /force
+
+# Ver si el equipo está en el dominio
+Get-WmiObject Win32_ComputerSystem
+
+# Ver GPOs aplicadas
+gpresult /r
+
+# Ver logs de Group Policy
+eventvwr.msc > Windows Logs > System > Filtrar por "GroupPolicy"
+
+--- PROBLEMA: No puedo acceder al repositorio SMB ---
+
+# Verificar permisos del recurso compartido
+Get-SmbShareAccess -Name "SoftwareRepo"
+
+# Verificar que el usuario pertenece al grupo correcto
+ipa user-show admin.soporte
+
+# Verificar conectividad al puerto SMB
+Test-NetConnection 192.168.137.100 -Port 445
+
+--- PROBLEMA: Portal web no carga ---
+
+# Verificar que Nginx está corriendo
+sudo systemctl status nginx
+
+# Ver logs de error
+sudo tail -f /var/log/nginx/error.log
+
+# Verificar DNS resuelve el dominio
+nslookup iniciales.net 192.168.137.2
+
+# Probar acceso directo por IP
+curl -k https://192.168.137.18
+
+
+################################################################################
+# COMANDOS DE CAPTURA PARA EL VIDEO Y DOCUMENTACIÓN
+################################################################################
+
+--- Screenshots necesarios ---
+
+Windows:
+# Herramienta de recortes
+Win + Shift + S
+
+# Captura completa
+Win + Print Screen
+
+Linux:
+# Captura de pantalla
+gnome-screenshot
+# O
+Shift + Print Screen
+
