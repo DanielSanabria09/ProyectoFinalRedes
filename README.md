@@ -100,4 +100,4 @@ desde equipos de la LAN
 - **Comandos-Utilizados.txt** → Archivo con todos los comandos 
 ejecutados durante la implementación en FreeIPA, Windows Server, 
 pfSense, Nginx y Squid, organizados por servicio
-- **Video** → [INSERTAR ENLACE VIDEO]
+- **Video** → https://youtu.be/P5LNBp5dTVc
